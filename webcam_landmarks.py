@@ -1,21 +1,43 @@
 import cv2
 import time
 import mediapipe as mp
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
 import numpy as np
+from mediapipe.tasks.python import vision
+from mediapipe.tasks.python.vision.face_landmarker import FaceLandmarksConnections
+
+
 
 MODEL_PATH = "models/face_landmarker.task"
 
-LEFT_CHEEK_IDS = [
-    36, 50, 101, 119, 120, 121, 47, 100, 118, 117, 123, 147, 187, 205, 206, 207,
-    216, 192, 147, 123, 116, 111, 123
-    ]
+# or FACEMESH_CONTOURS if you want fewer lines
+
+def draw_cheek_mesh(frame, face_landmarks, cheek_ids, connections, w, h,
+                    color=(180, 0, 0), thickness=0.5):
+    for conn in connections:
+        a = conn.start
+        b = conn.end
+
+        if a in cheek_ids and b in cheek_ids:
+            lm1 = face_landmarks[a]
+            lm2 = face_landmarks[b]
+
+            x1, y1 = int(lm1.x * w), int(lm1.y * h)
+            x2, y2 = int(lm2.x * w), int(lm2.y * h)
+
+            cv2.line(frame, (x1, y1), (x2, y2), color, thickness, cv2.LINE_AA)
+
+    for idx in cheek_ids:
+        lm = face_landmarks[idx]
+        x, y = int(lm.x * w), int(lm.y * h)
+        cv2.circle(frame, (x, y), 2, (0, 0, 255), -1)
+LEFT_CHEEK_POLYGON_IDS = [
+    36, 50, 101, 111, 118, 117, 116, 123, 147, 192, 216, 206, 207, 205, 187, 203, 212, 214, 187,
+]
 
 BaseOptions = mp.tasks.BaseOptions
-FaceLandmarker = vision.FaceLandmarker
-FaceLandmarkerOptions = vision.FaceLandmarkerOptions
-VisionRunningMode = vision.RunningMode
+FaceLandmarker = mp.tasks.vision.FaceLandmarker
+FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
+VisionRunningMode = mp.tasks.vision.RunningMode
 
 options = FaceLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=MODEL_PATH),
@@ -42,7 +64,6 @@ with FaceLandmarker.create_from_options(options) as landmarker:
         if not ok:
             break
 
-        # OpenCV gives BGR, MediaPipe expects RGB
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         mp_image = mp.Image(
@@ -56,37 +77,39 @@ with FaceLandmarker.create_from_options(options) as landmarker:
         h, w, _ = frame.shape
 
         if result.face_landmarks:
-         for face_landmarks in result.face_landmarks:
-         # draw all landmarks faintly
-          for lm in face_landmarks:
-            x = int(lm.x * w)
-            y = int(lm.y * h)
-            cv2.circle(frame, (x, y), 1, (0, 100, 0), -1)
+            for face_landmarks in result.face_landmarks:
+                # draw all landmarks faintly
+                for lm in face_landmarks:
+                    x = int(lm.x * w)
+                    y = int(lm.y * h)
+                    cv2.circle(frame, (x, y), 1, (0, 100, 0), -1)
 
-        # extract left cheek region
-        cheek_points = get_region_points(face_landmarks, LEFT_CHEEK_IDS, w, h)
+                
+                draw_cheek_mesh(
+                 frame,
+                 face_landmarks,
+                 set(LEFT_CHEEK_POLYGON_IDS),
+                FaceLandmarksConnections.FACE_LANDMARKS_TESSELATION,
+                 w,
+                 h,
+                 color=(180, 0, 0),
+                 thickness=1
+                 )
 
-        # draw cheek landmarks more clearly
-        for pt in cheek_points:
-            cv2.circle(frame, pt, 3, (0, 0, 255), -1)
-
-        # draw cheek boundary
-        cheek_array = np.array(cheek_points, dtype=np.int32)
-        cv2.polylines(frame, [cheek_array], isClosed=True, color=(255, 0, 0), thickness=2)
-
-        cv2.putText(
-            frame,
-            "Left Cheek Region",
-            (20, 40),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (255, 255, 255),
-            2
-        )
+               
+                cv2.putText(
+                    frame,
+                    "Left Cheek Polygon",
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (255, 255, 255),
+                    2
+                )
 
         cv2.imshow("Face Landmarks", frame)
 
-        key = cv2.waitKey(1)
+        key = cv2.waitKey(1) & 0xFF
         if key == 27 or key == ord("q"):
             break
 
