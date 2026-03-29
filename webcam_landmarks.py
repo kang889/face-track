@@ -1,27 +1,106 @@
-import cv2
+"""
+webcam_landmarks_mls.py
+
+Left-cheek facial tracking prototype with point-based Similarity Moving Least
+Squares (MLS) deformation for a small 2D cheek patch.
+
+Overview
+--------
+This program keeps the original project scope:
+- left cheek only
+- neutral cheek capture
+- neutral anchor capture
+- anchor-based head-motion compensation
+- corrected cheek motion analysis with pose/error gating
+
+New deformation stage
+---------------------
+Instead of using simple weighted driver translations, this version deforms a
+separate 2D cheek patch using point-based Similarity MLS.
+
+Conceptual roles
+----------------
+- landmarks: tracked input from MediaPipe
+- anchor landmarks: used only for global head-motion compensation
+- drivers / handles: a few stable cheek control points extracted from the
+  corrected cheek motion
+- cheek patch: separate 2D output geometry, initialized from the neutral cheek
+  shape and deformed by MLS
+
+Why MLS is used here
+--------------------
+MLS is a good fit for the current prototype because it is:
+- 2D
+- handle-driven
+- smooth
+- closed-form and lightweight enough for real-time use
+
+Algorithm reference
+-------------------
+This implementation follows point-based Similarity Moving Least Squares from:
+
+S. Schaefer, T. McPhail, J. Warren,
+"Image Deformation Using Moving Least Squares,"
+ACM Transactions on Graphics (SIGGRAPH), 25(3), 2006.
+
+The implementation uses the paper's point-handle weight definition:
+    w_i(v) = 1 / ||p_i - v||^(2 * alpha)
+
+and the similarity-constrained local transform idea from Section 2.2.
+The code below uses an equivalent 2D closed-form similarity update for each
+patch vertex.
+"""
+
 import time
+
+import cv2
 import mediapipe as mp
 import numpy as np
 from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.vision.face_landmarker import FaceLandmarksConnections
 
+
+# -----------------------------------------------------------------------------
+# Configuration
+# -----------------------------------------------------------------------------
+
 MODEL_PATH = "models/face_landmarker.task"
 
-# Left cheek only
+# Left cheek landmark subset.
 LEFT_CHEEK_IDS = [
     36, 50, 101, 111, 118, 117, 116, 123, 147,
-    192, 216, 206, 207, 205, 203, 212, 214, 187
+    192, 216, 206, 207, 205, 203, 212, 214, 187,
 ]
 
-# Relatively stable landmarks used to compensate for whole-head movement
-# (eye corners / nose bridge area)
+# Relatively stable landmarks used only for head-motion compensation.
 HEAD_ANCHOR_IDS = [33, 133, 362, 263, 6, 168]
 
+# Neutral capture.
 NEUTRAL_CAPTURE_FRAMES = 20
+
+# Driver extraction.
+DRIVER_REGION_COUNT = 3  # upper / middle / lower cheek
+
+# Similarity MLS.
+MLS_ALPHA = 1.0
+MLS_EPSILON = 1e-6
+
+# Motion-analysis and gating thresholds.
 ARROW_THRESHOLD_PX = 3.0
 REGION_ACTIVITY_THRESHOLD_PX = 4.0
 ANCHOR_ALIGNMENT_ERROR_THRESHOLD_PX = 8.0
+DRIVER_ARROW_THRESHOLD_PX = 1.5
+
+# Display toggles.
+SHOW_ALL_LANDMARKS = True
 SHOW_ANCHORS = False
+SHOW_DRIVER_HANDLES = True
+SHOW_MLS_PATCH = True
+
+
+# -----------------------------------------------------------------------------
+# MediaPipe setup
+# -----------------------------------------------------------------------------
 
 BaseOptions = mp.tasks.BaseOptions
 FaceLandmarker = vision.FaceLandmarker
@@ -34,21 +113,68 @@ options = FaceLandmarkerOptions(
     num_faces=1,
 )
 
-def get_landmark_points_px(face_landmarks, ids, w, h):
+
+# -----------------------------------------------------------------------------
+# Basic geometry utilities
+# -----------------------------------------------------------------------------
+
+
+def perp(vec):
+    """
+    Return the 2D perpendicular vector (-y, x).
+
+    This matches the standard 2D operator used in similarity MLS derivations.
+    """
+    return np.array([-vec[1], vec[0]], dtype=np.float32)
+
+
+# -----------------------------------------------------------------------------
+# Landmark utilities
+# -----------------------------------------------------------------------------
+
+
+def get_landmark_points_px(face_landmarks, ids, width, height):
+    """
+    Extract selected normalized MediaPipe landmarks as pixel-space points.
+
+    Parameters
+    ----------
+    face_landmarks : sequence
+        MediaPipe face landmark list for one face.
+    ids : list[int]
+        Landmark indices to extract.
+    width, height : int
+        Frame dimensions.
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape (N, 2), dtype float32.
+    """
     points = []
     for idx in ids:
         lm = face_landmarks[idx]
-        points.append([lm.x * w, lm.y * h])
+        points.append([lm.x * width, lm.y * height])
     return np.array(points, dtype=np.float32)
 
-def draw_all_landmarks(frame, face_landmarks, w, h):
+
+
+def draw_all_landmarks(frame, face_landmarks, width, height):
+    """Draw all detected face landmarks for debugging."""
     for lm in face_landmarks:
-        x = int(lm.x * w)
-        y = int(lm.y * h)
+        x = int(lm.x * width)
+        y = int(lm.y * height)
         cv2.circle(frame, (x, y), 1, (0, 100, 0), -1)
 
-def draw_cheek_mesh(frame, face_landmarks, cheek_ids, connections, w, h,
-                    color=(180, 0, 0), thickness=1):
+
+
+def draw_tracked_cheek_mesh(frame, face_landmarks, cheek_ids, connections, width, height,
+                            color=(180, 0, 0), thickness=1):
+    """
+    Draw the tracked left-cheek landmark mesh.
+
+    This is still the measured input geometry, not the MLS output patch.
+    """
     for conn in connections:
         a = conn.start
         b = conn.end
@@ -57,22 +183,37 @@ def draw_cheek_mesh(frame, face_landmarks, cheek_ids, connections, w, h,
             lm1 = face_landmarks[a]
             lm2 = face_landmarks[b]
 
-            x1, y1 = int(lm1.x * w), int(lm1.y * h)
-            x2, y2 = int(lm2.x * w), int(lm2.y * h)
-
+            x1, y1 = int(lm1.x * width), int(lm1.y * height)
+            x2, y2 = int(lm2.x * width), int(lm2.y * height)
             cv2.line(frame, (x1, y1), (x2, y2), color, thickness, cv2.LINE_AA)
 
     for idx in cheek_ids:
         lm = face_landmarks[idx]
-        x, y = int(lm.x * w), int(lm.y * h)
+        x, y = int(lm.x * width), int(lm.y * height)
         cv2.circle(frame, (x, y), 2, (0, 0, 255), -1)
 
+
+
 def draw_anchor_points(frame, anchor_points):
+    """Draw head anchor points used for pose compensation."""
     for pt in anchor_points:
         x, y = int(pt[0]), int(pt[1])
         cv2.circle(frame, (x, y), 3, (255, 255, 0), -1)
 
+
+# -----------------------------------------------------------------------------
+# Head-motion compensation
+# -----------------------------------------------------------------------------
+
+
 def estimate_head_motion_transform(current_anchor_points, neutral_anchor_points):
+    """
+    Estimate a partial affine transform mapping:
+        current anchors -> neutral anchors
+
+    This removes most global translation / rotation / scale before cheek motion
+    is compared.
+    """
     if current_anchor_points is None or neutral_anchor_points is None:
         return None
 
@@ -82,11 +223,14 @@ def estimate_head_motion_transform(current_anchor_points, neutral_anchor_points)
     transform, _ = cv2.estimateAffinePartial2D(
         current_anchor_points,
         neutral_anchor_points,
-        method=cv2.LMEDS
+        method=cv2.LMEDS,
     )
     return transform
 
+
+
 def apply_affine_to_points(points, transform):
+    """Apply a 2x3 affine transform to an (N, 2) point array."""
     if transform is None:
         return None
 
@@ -95,23 +239,38 @@ def apply_affine_to_points(points, transform):
     transformed = (transform @ homogeneous.T).T
     return transformed.astype(np.float32)
 
+
+
 def compute_mean_alignment_error(current_anchor_points, neutral_anchor_points, transform):
+    """
+    Measure the mean post-alignment anchor error in pixels.
+
+    A lower value means the current face pose aligns to the neutral pose more
+    reliably. This is used as a gate to suppress misleading cheek comparisons.
+    """
     corrected_anchor_points = apply_affine_to_points(current_anchor_points, transform)
     if corrected_anchor_points is None:
         return float("inf")
 
-    errors = np.linalg.norm(
-        corrected_anchor_points - neutral_anchor_points,
-        axis=1
-    )
+    errors = np.linalg.norm(corrected_anchor_points - neutral_anchor_points, axis=1)
     return float(np.mean(errors))
 
+
+# -----------------------------------------------------------------------------
+# Motion display helpers
+# -----------------------------------------------------------------------------
+
+
 def draw_displacement_arrows(frame, neutral_points, corrected_points, threshold_px):
+    """
+    Draw yellow arrows from neutral cheek points to corrected current cheek
+    points and return per-point displacement magnitudes.
+    """
     deltas = corrected_points - neutral_points
     magnitudes = np.linalg.norm(deltas, axis=1)
 
-    for neutral_pt, corrected_pt, mag in zip(neutral_points, corrected_points, magnitudes):
-        if mag < threshold_px:
+    for neutral_pt, corrected_pt, magnitude in zip(neutral_points, corrected_points, magnitudes):
+        if magnitude < threshold_px:
             continue
 
         start = tuple(np.round(neutral_pt).astype(int))
@@ -120,243 +279,541 @@ def draw_displacement_arrows(frame, neutral_points, corrected_points, threshold_
 
     return magnitudes
 
-cap = cv2.VideoCapture(0)
-if not cap.isOpened():
-    raise RuntimeError("Could not open webcam")
 
-neutral_cheek_points = None
-neutral_anchor_points = None
 
-capture_requested = False
-cheek_capture_buffer = []
-anchor_capture_buffer = []
+def draw_driver_handles(frame, rest_points, current_points, threshold_px=1.0):
+    """
+    Draw the neutral and current cheek driver handles.
 
-with FaceLandmarker.create_from_options(options) as landmarker:
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
+    Each current handle is shown with an arrow from its neutral handle position.
+    """
+    for index, (rest_pt, current_pt) in enumerate(zip(rest_points, current_points), start=1):
+        start = tuple(np.round(rest_pt).astype(int))
+        end = tuple(np.round(current_pt).astype(int))
+        motion = float(np.linalg.norm(current_pt - rest_pt))
 
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        cv2.circle(frame, start, 4, (100, 100, 100), -1)
+        cv2.putText(
+            frame,
+            f"R{index}",
+            (start[0] + 5, start[1] - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (160, 160, 160),
+            1,
+        )
 
-        timestamp_ms = int(time.time() * 1000)
-        result = landmarker.detect_for_video(mp_image, timestamp_ms)
+        cv2.circle(frame, end, 4, (255, 255, 0), -1)
+        cv2.putText(
+            frame,
+            f"D{index}",
+            (end[0] + 5, end[1] - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (255, 255, 0),
+            1,
+        )
 
-        h, w, _ = frame.shape
-        current_cheek_points = None
-        current_anchor_points = None
+        if motion >= threshold_px:
+            cv2.arrowedLine(frame, start, end, (255, 255, 0), 1, tipLength=0.25)
 
-        if result.face_landmarks:
-            face_landmarks = result.face_landmarks[0]
 
-            draw_all_landmarks(frame, face_landmarks, w, h)
+# -----------------------------------------------------------------------------
+# Patch / driver construction
+# -----------------------------------------------------------------------------
 
-            current_cheek_points = get_landmark_points_px(
-                face_landmarks, LEFT_CHEEK_IDS, w, h
-            )
-            current_anchor_points = get_landmark_points_px(
-                face_landmarks, HEAD_ANCHOR_IDS, w, h
-            )
 
-            draw_cheek_mesh(
-                frame,
-                face_landmarks,
-                set(LEFT_CHEEK_IDS),
-                FaceLandmarksConnections.FACE_LANDMARKS_TESSELATION,
-                w,
-                h,
-                color=(180, 0, 0),
-                thickness=1
-            )
+def build_local_patch_edges(landmark_ids, connections):
+    """
+    Build local cheek-patch edges from the MediaPipe global tesselation.
 
-            if SHOW_ANCHORS:
-                draw_anchor_points(frame, current_anchor_points)
+    The returned edges index into the local cheek patch vertex array.
+    """
+    id_to_local = {landmark_id: i for i, landmark_id in enumerate(landmark_ids)}
+    edges = set()
 
-            # Capture neutral cheek + neutral anchors
-            if capture_requested:
-                cheek_capture_buffer.append(current_cheek_points.copy())
-                anchor_capture_buffer.append(current_anchor_points.copy())
+    for conn in connections:
+        a = conn.start
+        b = conn.end
 
-                cv2.putText(
+        if a in id_to_local and b in id_to_local:
+            ia = id_to_local[a]
+            ib = id_to_local[b]
+            if ia > ib:
+                ia, ib = ib, ia
+            edges.add((ia, ib))
+
+    return sorted(edges)
+
+
+
+def build_driver_groups_from_neutral(neutral_points, num_groups=3):
+    """
+    Split the neutral cheek patch into simple vertical cheek regions.
+
+    For the current prototype this yields a minimal, stable set of local cheek
+    drivers: upper / middle / lower.
+    """
+    sorted_indices = np.argsort(neutral_points[:, 1])
+    chunks = np.array_split(sorted_indices, num_groups)
+
+    groups = []
+    for chunk in chunks:
+        if len(chunk) > 0:
+            groups.append(np.array(chunk, dtype=np.int32))
+
+    return groups
+
+
+
+def compute_driver_rest_points(neutral_patch_points, driver_groups):
+    """Compute neutral handle positions from the neutral cheek patch."""
+    centers = []
+    for group in driver_groups:
+        centers.append(np.mean(neutral_patch_points[group], axis=0))
+    return np.array(centers, dtype=np.float32)
+
+
+
+def compute_driver_current_points(corrected_points, driver_groups):
+    """Compute current handle positions from corrected cheek points."""
+    centers = []
+    for group in driver_groups:
+        centers.append(np.mean(corrected_points[group], axis=0))
+    return np.array(centers, dtype=np.float32)
+
+
+# -----------------------------------------------------------------------------
+# Similarity MLS deformation
+# -----------------------------------------------------------------------------
+
+
+def mls_similarity_deform_points(vertices, handle_rest_points, handle_current_points,
+                                 alpha=1.0, eps=1e-6):
+    """
+    Deform 2D vertices using point-based Similarity Moving Least Squares (MLS).
+
+    Parameters
+    ----------
+    vertices : np.ndarray, shape (N, 2)
+        Patch vertices in neutral/rest space.
+    handle_rest_points : np.ndarray, shape (K, 2)
+        Neutral handle positions p_i.
+    handle_current_points : np.ndarray, shape (K, 2)
+        Current handle positions q_i.
+    alpha : float
+        Weight falloff parameter in the paper's weight function:
+            w_i(v) = 1 / ||p_i - v||^(2 * alpha)
+    eps : float
+        Small numerical constant.
+
+    Returns
+    -------
+    np.ndarray
+        Deformed vertices of shape (N, 2).
+
+    Notes
+    -----
+    This implementation uses the point-based Similarity MLS formulation from
+    Schaefer et al. (2006). For each vertex v:
+    1. Compute MLS weights relative to the neutral handles p_i.
+    2. Compute weighted centroids p* and q*.
+    3. Solve the local similarity transform from the weighted covariance terms.
+    4. Apply that local transform to v - p* and translate by q*.
+
+    The result is smoother and more shape-preserving than a simple weighted
+    translation blend.
+    """
+    vertices = np.asarray(vertices, dtype=np.float32)
+    p = np.asarray(handle_rest_points, dtype=np.float32)
+    q = np.asarray(handle_current_points, dtype=np.float32)
+
+    if len(p) == 0 or len(q) == 0 or len(p) != len(q):
+        return vertices.copy()
+
+    deformed = np.empty_like(vertices)
+    eps_sq = eps * eps
+
+    for vertex_index, v in enumerate(vertices):
+        diff = p - v
+        dist_sq = np.sum(diff * diff, axis=1)
+
+        # MLS interpolates the handles. If a vertex is numerically at a handle,
+        # map it directly to the corresponding deformed handle.
+        nearest_index = int(np.argmin(dist_sq))
+        if dist_sq[nearest_index] < eps_sq:
+            deformed[vertex_index] = q[nearest_index]
+            continue
+
+        weights = 1.0 / np.maximum(dist_sq, eps_sq) ** alpha
+        weight_sum = float(np.sum(weights))
+        if weight_sum < eps:
+            deformed[vertex_index] = v
+            continue
+
+        p_star = np.sum(weights[:, None] * p, axis=0) / weight_sum
+        q_star = np.sum(weights[:, None] * q, axis=0) / weight_sum
+
+        p_hat = p - p_star
+        q_hat = q - q_star
+        v_hat = v - p_star
+
+        mu_s = float(np.sum(weights * np.sum(p_hat * p_hat, axis=1)))
+        if mu_s < eps:
+            deformed[vertex_index] = q_star + v_hat
+            continue
+
+        a_numerator = float(np.sum(weights * np.sum(p_hat * q_hat, axis=1)))
+        b_numerator = float(np.sum(weights * (p_hat[:, 0] * q_hat[:, 1] - p_hat[:, 1] * q_hat[:, 0])))
+
+        a = a_numerator / mu_s
+        b = b_numerator / mu_s
+
+        similarity_matrix = np.array(
+            [[a, -b],
+             [b,  a]],
+            dtype=np.float32,
+        )
+
+        deformed[vertex_index] = q_star + similarity_matrix @ v_hat
+
+    return deformed
+
+
+# -----------------------------------------------------------------------------
+# Patch drawing
+# -----------------------------------------------------------------------------
+
+
+def draw_patch_from_points(frame, points, edges, color=(255, 0, 255), thickness=2):
+    """Draw a cheek patch from point positions and local patch edges."""
+    for a, b in edges:
+        p1 = tuple(np.round(points[a]).astype(int))
+        p2 = tuple(np.round(points[b]).astype(int))
+        cv2.line(frame, p1, p2, color, thickness, cv2.LINE_AA)
+
+    for pt in points:
+        x, y = np.round(pt).astype(int)
+        cv2.circle(frame, (x, y), 2, color, -1)
+
+
+# -----------------------------------------------------------------------------
+# Main application
+# -----------------------------------------------------------------------------
+
+
+def main():
+    """Run the real-time left-cheek tracking and MLS deformation demo."""
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        raise RuntimeError("Could not open webcam")
+
+    # Neutral tracking references.
+    neutral_cheek_points = None
+    neutral_anchor_points = None
+
+    # Separate cheek patch and driver state.
+    neutral_patch_points = None
+    driver_groups = None
+    driver_rest_points = None
+
+    patch_edges = build_local_patch_edges(
+        LEFT_CHEEK_IDS,
+        FaceLandmarksConnections.FACE_LANDMARKS_TESSELATION,
+    )
+
+    capture_requested = False
+    cheek_capture_buffer = []
+    anchor_capture_buffer = []
+
+    with FaceLandmarker.create_from_options(options) as landmarker:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+            timestamp_ms = int(time.time() * 1000)
+            result = landmarker.detect_for_video(mp_image, timestamp_ms)
+
+            height, width, _ = frame.shape
+            current_cheek_points = None
+            current_anchor_points = None
+
+            if result.face_landmarks:
+                face_landmarks = result.face_landmarks[0]
+
+                if SHOW_ALL_LANDMARKS:
+                    draw_all_landmarks(frame, face_landmarks, width, height)
+
+                current_cheek_points = get_landmark_points_px(
+                    face_landmarks,
+                    LEFT_CHEEK_IDS,
+                    width,
+                    height,
+                )
+                current_anchor_points = get_landmark_points_px(
+                    face_landmarks,
+                    HEAD_ANCHOR_IDS,
+                    width,
+                    height,
+                )
+
+                draw_tracked_cheek_mesh(
                     frame,
-                    f"Capturing neutral {len(cheek_capture_buffer)}/{NEUTRAL_CAPTURE_FRAMES}",
-                    (20, 70),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 255, 255),
-                    2
+                    face_landmarks,
+                    set(LEFT_CHEEK_IDS),
+                    FaceLandmarksConnections.FACE_LANDMARKS_TESSELATION,
+                    width,
+                    height,
+                    color=(180, 0, 0),
+                    thickness=1,
                 )
 
-                if len(cheek_capture_buffer) >= NEUTRAL_CAPTURE_FRAMES:
-                    neutral_cheek_points = np.mean(cheek_capture_buffer, axis=0).astype(np.float32)
-                    neutral_anchor_points = np.mean(anchor_capture_buffer, axis=0).astype(np.float32)
+                if SHOW_ANCHORS:
+                    draw_anchor_points(frame, current_anchor_points)
 
-                    cheek_capture_buffer.clear()
-                    anchor_capture_buffer.clear()
-                    capture_requested = False
-
-            # Head-motion compensated cheek displacement + pose validity gate
-            if neutral_cheek_points is not None and neutral_anchor_points is not None:
-                transform = estimate_head_motion_transform(
-                    current_anchor_points,
-                    neutral_anchor_points
-                )
-
-                if transform is None:
-                    cv2.putText(
-                        frame,
-                        "Alignment failed",
-                        (20, 100),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 0, 255),
-                        2
-                    )
-                else:
-                    anchor_alignment_error = compute_mean_alignment_error(
-                        current_anchor_points,
-                        neutral_anchor_points,
-                        transform
-                    )
+                # -------------------------------------------------------------
+                # Neutral capture
+                # -------------------------------------------------------------
+                if capture_requested:
+                    cheek_capture_buffer.append(current_cheek_points.copy())
+                    anchor_capture_buffer.append(current_anchor_points.copy())
 
                     cv2.putText(
                         frame,
-                        f"Anchor error: {anchor_alignment_error:.2f}px",
-                        (20, 100),
+                        f"Capturing neutral {len(cheek_capture_buffer)}/{NEUTRAL_CAPTURE_FRAMES}",
+                        (20, 70),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.6,
                         (255, 255, 255),
-                        2
+                        2,
                     )
 
-                    if anchor_alignment_error > ANCHOR_ALIGNMENT_ERROR_THRESHOLD_PX:
+                    if len(cheek_capture_buffer) >= NEUTRAL_CAPTURE_FRAMES:
+                        neutral_cheek_points = np.mean(cheek_capture_buffer, axis=0).astype(np.float32)
+                        neutral_anchor_points = np.mean(anchor_capture_buffer, axis=0).astype(np.float32)
+
+                        # The separate cheek patch is initialized from the neutral
+                        # cheek geometry, but is later deformed by MLS instead of
+                        # directly copying live tracked landmark positions.
+                        neutral_patch_points = neutral_cheek_points.copy()
+
+                        driver_groups = build_driver_groups_from_neutral(
+                            neutral_patch_points,
+                            num_groups=DRIVER_REGION_COUNT,
+                        )
+                        driver_rest_points = compute_driver_rest_points(
+                            neutral_patch_points,
+                            driver_groups,
+                        )
+
+                        cheek_capture_buffer.clear()
+                        anchor_capture_buffer.clear()
+                        capture_requested = False
+
+                # -------------------------------------------------------------
+                # Head-motion compensated cheek analysis + MLS deformation
+                # -------------------------------------------------------------
+                if neutral_cheek_points is not None and neutral_anchor_points is not None:
+                    transform = estimate_head_motion_transform(
+                        current_anchor_points,
+                        neutral_anchor_points,
+                    )
+
+                    if transform is None:
                         cv2.putText(
                             frame,
-                            "Pose too large for cheek comparison",
-                            (20, 130),
+                            "Alignment failed",
+                            (20, 100),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
                             (0, 0, 255),
-                            2
+                            2,
+                        )
+                    else:
+                        anchor_alignment_error = compute_mean_alignment_error(
+                            current_anchor_points,
+                            neutral_anchor_points,
+                            transform,
                         )
 
                         cv2.putText(
                             frame,
-                            "Cheek arrows suppressed",
-                            (20, 160),
+                            f"Anchor error: {anchor_alignment_error:.2f}px",
+                            (20, 100),
                             cv2.FONT_HERSHEY_SIMPLEX,
-                            0.55,
-                            (180, 180, 180),
-                            2
-                        )
-                    else:
-                        corrected_cheek_points = apply_affine_to_points(
-                            current_cheek_points,
-                            transform
+                            0.6,
+                            (255, 255, 255),
+                            2,
                         )
 
-                        if corrected_cheek_points is not None:
-                            magnitudes = np.linalg.norm(
-                                corrected_cheek_points - neutral_cheek_points,
-                                axis=1
-                            )
-
-                            mean_disp = float(np.mean(magnitudes))
-                            max_disp = float(np.max(magnitudes))
-
-                            if mean_disp >= REGION_ACTIVITY_THRESHOLD_PX:
-                                draw_displacement_arrows(
-                                    frame,
-                                    neutral_cheek_points,
-                                    corrected_cheek_points,
-                                    ARROW_THRESHOLD_PX
-                                )
-                                status_text = "Cheek activity detected"
-                                status_color = (0, 255, 255)
-                            else:
-                                status_text = "No significant local cheek activity"
-                                status_color = (180, 180, 180)
-
+                        if anchor_alignment_error > ANCHOR_ALIGNMENT_ERROR_THRESHOLD_PX:
                             cv2.putText(
                                 frame,
-                                f"Mean disp: {mean_disp:.2f}px",
+                                "Pose too large for cheek comparison",
                                 (20, 130),
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.6,
-                                (255, 255, 255),
-                                2
+                                (0, 0, 255),
+                                2,
                             )
-
                             cv2.putText(
                                 frame,
-                                f"Max disp: {max_disp:.2f}px",
+                                "Cheek analysis and MLS patch suppressed",
                                 (20, 160),
                                 cv2.FONT_HERSHEY_SIMPLEX,
-                                0.6,
-                                (255, 255, 255),
-                                2
-                            )
-
-                            cv2.putText(
-                                frame,
-                                status_text,
-                                (20, 190),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.6,
-                                status_color,
-                                2
-                            )
-
-                            cv2.putText(
-                                frame,
-                                "Head motion compensated",
-                                (20, 220),
-                                cv2.FONT_HERSHEY_SIMPLEX,
                                 0.55,
-                                (0, 255, 0),
-                                2
+                                (180, 180, 180),
+                                2,
                             )
+                        else:
+                            corrected_cheek_points = apply_affine_to_points(
+                                current_cheek_points,
+                                transform,
+                            )
+
+                            if corrected_cheek_points is not None:
+                                magnitudes = np.linalg.norm(
+                                    corrected_cheek_points - neutral_cheek_points,
+                                    axis=1,
+                                )
+                                mean_disp = float(np.mean(magnitudes))
+                                max_disp = float(np.max(magnitudes))
+
+                                if mean_disp >= REGION_ACTIVITY_THRESHOLD_PX:
+                                    draw_displacement_arrows(
+                                        frame,
+                                        neutral_cheek_points,
+                                        corrected_cheek_points,
+                                        ARROW_THRESHOLD_PX,
+                                    )
+                                    status_text = "Cheek activity detected"
+                                    status_color = (0, 255, 255)
+                                else:
+                                    status_text = "No significant local cheek activity"
+                                    status_color = (180, 180, 180)
+
+                                cv2.putText(
+                                    frame,
+                                    f"Mean disp: {mean_disp:.2f}px",
+                                    (20, 130),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.6,
+                                    (255, 255, 255),
+                                    2,
+                                )
+                                cv2.putText(
+                                    frame,
+                                    f"Max disp: {max_disp:.2f}px",
+                                    (20, 160),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.6,
+                                    (255, 255, 255),
+                                    2,
+                                )
+                                cv2.putText(
+                                    frame,
+                                    status_text,
+                                    (20, 190),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.6,
+                                    status_color,
+                                    2,
+                                )
+                                cv2.putText(
+                                    frame,
+                                    "Head motion compensated",
+                                    (20, 220),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.55,
+                                    (0, 255, 0),
+                                    2,
+                                )
+
+                                if (
+                                    SHOW_MLS_PATCH
+                                    and neutral_patch_points is not None
+                                    and driver_groups is not None
+                                    and driver_rest_points is not None
+                                ):
+                                    driver_current_points = compute_driver_current_points(
+                                        corrected_cheek_points,
+                                        driver_groups,
+                                    )
+
+                                    mls_patch_points = mls_similarity_deform_points(
+                                        neutral_patch_points,
+                                        driver_rest_points,
+                                        driver_current_points,
+                                        alpha=MLS_ALPHA,
+                                        eps=MLS_EPSILON,
+                                    )
+
+                                    draw_patch_from_points(
+                                        frame,
+                                        mls_patch_points,
+                                        patch_edges,
+                                        color=(255, 0, 255),
+                                        thickness=2,
+                                    )
+
+                                    if SHOW_DRIVER_HANDLES:
+                                        draw_driver_handles(
+                                            frame,
+                                            driver_rest_points,
+                                            driver_current_points,
+                                            threshold_px=DRIVER_ARROW_THRESHOLD_PX,
+                                        )
+
+                cv2.putText(
+                    frame,
+                    "Left Cheek Motion + Similarity MLS Patch",
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (255, 255, 255),
+                    2,
+                )
 
             cv2.putText(
                 frame,
-                "Left Cheek Motion",
-                (20, 40),
+                "N = capture neutral | C = clear neutral | Q / ESC = quit",
+                (20, height - 20),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
+                0.5,
                 (255, 255, 255),
-                2
+                1,
             )
 
-        cv2.putText(
-            frame,
-            "N = capture neutral | C = clear neutral | Q / ESC = quit",
-            (20, h - 20),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (255, 255, 255),
-            1
-        )
+            cv2.imshow("Face Landmarks", frame)
 
-        cv2.imshow("Face Landmarks", frame)
+            key = cv2.waitKey(1) & 0xFF
 
-        key = cv2.waitKey(1) & 0xFF
+            if key == ord("n"):
+                if current_cheek_points is not None and current_anchor_points is not None:
+                    capture_requested = True
+                    cheek_capture_buffer.clear()
+                    anchor_capture_buffer.clear()
 
-        if key == ord("n"):
-            if current_cheek_points is not None and current_anchor_points is not None:
-                capture_requested = True
+            elif key == ord("c"):
+                neutral_cheek_points = None
+                neutral_anchor_points = None
+                neutral_patch_points = None
+                driver_groups = None
+                driver_rest_points = None
+                capture_requested = False
                 cheek_capture_buffer.clear()
                 anchor_capture_buffer.clear()
 
-        elif key == ord("c"):
-            neutral_cheek_points = None
-            neutral_anchor_points = None
-            capture_requested = False
-            cheek_capture_buffer.clear()
-            anchor_capture_buffer.clear()
+            elif key == 27 or key == ord("q"):
+                break
 
-        elif key == 27 or key == ord("q"):
-            break
+    cap.release()
+    cv2.destroyAllWindows()
 
-cap.release()
-cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()
