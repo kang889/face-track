@@ -1,8 +1,7 @@
 """
-webcam_landmarks_mls.py
+webcam_landmarks_linear_skinning.py
 
-Left-cheek facial tracking prototype with point-based Similarity Moving Least
-Squares (MLS) deformation for a small 2D cheek patch.
+Left-cheek facial tracking prototype with a simple 2D linear skinning stage.
 
 Overview
 --------
@@ -15,8 +14,8 @@ This program keeps the original project scope:
 
 New deformation stage
 ---------------------
-Instead of using simple weighted driver translations, this version deforms a
-separate 2D cheek patch using point-based Similarity MLS.
+Instead of using Similarity MLS, this version deforms a separate 2D cheek patch
+using simple linear skinning.
 
 Conceptual roles
 ----------------
@@ -25,30 +24,27 @@ Conceptual roles
 - drivers / handles: a few stable cheek control points extracted from the
   corrected cheek motion
 - cheek patch: separate 2D output geometry, initialized from the neutral cheek
-  shape and deformed by MLS
+  shape and deformed by linear skinning
 
-Why MLS is used here
---------------------
-MLS is a good fit for the current prototype because it is:
-- 2D
-- handle-driven
-- smooth
-- closed-form and lightweight enough for real-time use
+What linear skinning means here
+-------------------------------
+Each patch vertex has fixed weights to the cheek drivers. Every frame:
+1. The program computes driver displacement from neutral.
+2. Each patch vertex blends those driver displacements using its own weights.
+3. The blended displacement is added to the neutral patch vertex.
 
-Algorithm reference
--------------------
-This implementation follows point-based Similarity Moving Least Squares from:
+For this simple 2D prototype, the deformation formula is:
+    v' = v + w1*d1 + w2*d2 + ... + wk*dk
 
-S. Schaefer, T. McPhail, J. Warren,
-"Image Deformation Using Moving Least Squares,"
-ACM Transactions on Graphics (SIGGRAPH), 25(3), 2006.
+where:
+- v  = neutral patch vertex
+- di = displacement of driver i from its neutral position
+- wi = fixed weight of that vertex to driver i
+- v' = deformed patch vertex
 
-The implementation uses the paper's point-handle weight definition:
-    w_i(v) = 1 / ||p_i - v||^(2 * alpha)
-
-and the similarity-constrained local transform idea from Section 2.2.
-The code below uses an equivalent 2D closed-form similarity update for each
-patch vertex.
+This is a lightweight translation-only skinning stage. It is intentionally
+simpler than the previous Similarity MLS version and is easier to explain and
+extend toward future skinning work.
 """
 
 import time
@@ -81,9 +77,11 @@ NEUTRAL_CAPTURE_FRAMES = 20
 # Driver extraction.
 DRIVER_REGION_COUNT = 3  # upper / middle / lower cheek
 
-# Similarity MLS.
-MLS_ALPHA = 1.0
-MLS_EPSILON = 1e-6
+# Linear skinning weight construction.
+# Weights are computed once from the neutral patch and neutral driver positions.
+# A higher power makes each vertex follow the nearest driver more strongly.
+SKINNING_WEIGHT_POWER = 2.0
+SKINNING_EPSILON = 1e-6
 
 # Motion-analysis and gating thresholds.
 ARROW_THRESHOLD_PX = 3.0
@@ -95,7 +93,7 @@ DRIVER_ARROW_THRESHOLD_PX = 1.5
 SHOW_ALL_LANDMARKS = True
 SHOW_ANCHORS = False
 SHOW_DRIVER_HANDLES = True
-SHOW_MLS_PATCH = True
+SHOW_SKINNED_PATCH = True
 
 
 # -----------------------------------------------------------------------------
@@ -112,20 +110,6 @@ options = FaceLandmarkerOptions(
     running_mode=VisionRunningMode.VIDEO,
     num_faces=1,
 )
-
-
-# -----------------------------------------------------------------------------
-# Basic geometry utilities
-# -----------------------------------------------------------------------------
-
-
-def perp(vec):
-    """
-    Return the 2D perpendicular vector (-y, x).
-
-    This matches the standard 2D operator used in similarity MLS derivations.
-    """
-    return np.array([-vec[1], vec[0]], dtype=np.float32)
 
 
 # -----------------------------------------------------------------------------
@@ -173,7 +157,7 @@ def draw_tracked_cheek_mesh(frame, face_landmarks, cheek_ids, connections, width
     """
     Draw the tracked left-cheek landmark mesh.
 
-    This is still the measured input geometry, not the MLS output patch.
+    This is still the measured input geometry, not the skinned output patch.
     """
     for conn in connections:
         a = conn.start
@@ -383,101 +367,88 @@ def compute_driver_current_points(corrected_points, driver_groups):
     return np.array(centers, dtype=np.float32)
 
 
-# -----------------------------------------------------------------------------
-# Similarity MLS deformation
-# -----------------------------------------------------------------------------
 
-
-def mls_similarity_deform_points(vertices, handle_rest_points, handle_current_points,
-                                 alpha=1.0, eps=1e-6):
+def compute_driver_offsets(driver_rest_points, driver_current_points):
     """
-    Deform 2D vertices using point-based Similarity Moving Least Squares (MLS).
+    Compute driver displacement from neutral.
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape (K, 2) where each row is the current driver displacement
+        relative to its neutral position.
+    """
+    return (driver_current_points - driver_rest_points).astype(np.float32)
+
+
+
+def build_patch_weights(neutral_patch_points, driver_rest_points, power=2.0, eps=1e-6):
+    """
+    Build fixed per-vertex skinning weights from the neutral patch geometry.
+
+    For this prototype, weights are created once from inverse distance to the
+    neutral driver positions and then normalized so each vertex's weights sum to 1.
 
     Parameters
     ----------
-    vertices : np.ndarray, shape (N, 2)
-        Patch vertices in neutral/rest space.
-    handle_rest_points : np.ndarray, shape (K, 2)
-        Neutral handle positions p_i.
-    handle_current_points : np.ndarray, shape (K, 2)
-        Current handle positions q_i.
-    alpha : float
-        Weight falloff parameter in the paper's weight function:
-            w_i(v) = 1 / ||p_i - v||^(2 * alpha)
+    neutral_patch_points : np.ndarray, shape (N, 2)
+        Patch vertices in neutral space.
+    driver_rest_points : np.ndarray, shape (K, 2)
+        Neutral driver positions.
+    power : float
+        Inverse-distance falloff power.
     eps : float
         Small numerical constant.
 
     Returns
     -------
     np.ndarray
-        Deformed vertices of shape (N, 2).
+        Weight matrix of shape (N, K).
+    """
+    weights = []
+
+    for vertex in neutral_patch_points:
+        dist_sq = np.sum((driver_rest_points - vertex) ** 2, axis=1)
+        inv = 1.0 / np.maximum(dist_sq, eps * eps) ** (power / 2.0)
+        inv /= np.sum(inv)
+        weights.append(inv)
+
+    return np.array(weights, dtype=np.float32)
+
+
+# -----------------------------------------------------------------------------
+# Linear skinning deformation
+# -----------------------------------------------------------------------------
+
+
+def linear_skinning_deform_points(neutral_patch_points, patch_weights, driver_offsets):
+    """
+    Deform 2D vertices using simple linear skinning.
+
+    Parameters
+    ----------
+    neutral_patch_points : np.ndarray, shape (N, 2)
+        Patch vertices in neutral/rest space.
+    patch_weights : np.ndarray, shape (N, K)
+        Fixed per-vertex weights to K drivers.
+    driver_offsets : np.ndarray, shape (K, 2)
+        Current driver displacement vectors.
+
+    Returns
+    -------
+    np.ndarray
+        Deformed patch vertices of shape (N, 2).
 
     Notes
     -----
-    This implementation uses the point-based Similarity MLS formulation from
-    Schaefer et al. (2006). For each vertex v:
-    1. Compute MLS weights relative to the neutral handles p_i.
-    2. Compute weighted centroids p* and q*.
-    3. Solve the local similarity transform from the weighted covariance terms.
-    4. Apply that local transform to v - p* and translate by q*.
+    For each vertex v, this function applies:
+        v' = v + sum_i( w_i * d_i )
 
-    The result is smoother and more shape-preserving than a simple weighted
-    translation blend.
+    This is a simple translation-based skinning step. It is intentionally kept
+    minimal for clarity and for easy comparison against the earlier MLS version.
     """
-    vertices = np.asarray(vertices, dtype=np.float32)
-    p = np.asarray(handle_rest_points, dtype=np.float32)
-    q = np.asarray(handle_current_points, dtype=np.float32)
-
-    if len(p) == 0 or len(q) == 0 or len(p) != len(q):
-        return vertices.copy()
-
-    deformed = np.empty_like(vertices)
-    eps_sq = eps * eps
-
-    for vertex_index, v in enumerate(vertices):
-        diff = p - v
-        dist_sq = np.sum(diff * diff, axis=1)
-
-        # MLS interpolates the handles. If a vertex is numerically at a handle,
-        # map it directly to the corresponding deformed handle.
-        nearest_index = int(np.argmin(dist_sq))
-        if dist_sq[nearest_index] < eps_sq:
-            deformed[vertex_index] = q[nearest_index]
-            continue
-
-        weights = 1.0 / np.maximum(dist_sq, eps_sq) ** alpha
-        weight_sum = float(np.sum(weights))
-        if weight_sum < eps:
-            deformed[vertex_index] = v
-            continue
-
-        p_star = np.sum(weights[:, None] * p, axis=0) / weight_sum
-        q_star = np.sum(weights[:, None] * q, axis=0) / weight_sum
-
-        p_hat = p - p_star
-        q_hat = q - q_star
-        v_hat = v - p_star
-
-        mu_s = float(np.sum(weights * np.sum(p_hat * p_hat, axis=1)))
-        if mu_s < eps:
-            deformed[vertex_index] = q_star + v_hat
-            continue
-
-        a_numerator = float(np.sum(weights * np.sum(p_hat * q_hat, axis=1)))
-        b_numerator = float(np.sum(weights * (p_hat[:, 0] * q_hat[:, 1] - p_hat[:, 1] * q_hat[:, 0])))
-
-        a = a_numerator / mu_s
-        b = b_numerator / mu_s
-
-        similarity_matrix = np.array(
-            [[a, -b],
-             [b,  a]],
-            dtype=np.float32,
-        )
-
-        deformed[vertex_index] = q_star + similarity_matrix @ v_hat
-
-    return deformed
+    blended_offsets = patch_weights @ driver_offsets
+    return (neutral_patch_points + blended_offsets).astype(np.float32)
 
 
 # -----------------------------------------------------------------------------
@@ -503,7 +474,7 @@ def draw_patch_from_points(frame, points, edges, color=(255, 0, 255), thickness=
 
 
 def main():
-    """Run the real-time left-cheek tracking and MLS deformation demo."""
+    """Run the real-time left-cheek tracking and linear skinning demo."""
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         raise RuntimeError("Could not open webcam")
@@ -516,6 +487,7 @@ def main():
     neutral_patch_points = None
     driver_groups = None
     driver_rest_points = None
+    patch_weights = None
 
     patch_edges = build_local_patch_edges(
         LEFT_CHEEK_IDS,
@@ -597,8 +569,7 @@ def main():
                         neutral_anchor_points = np.mean(anchor_capture_buffer, axis=0).astype(np.float32)
 
                         # The separate cheek patch is initialized from the neutral
-                        # cheek geometry, but is later deformed by MLS instead of
-                        # directly copying live tracked landmark positions.
+                        # cheek geometry, and is later deformed by linear skinning.
                         neutral_patch_points = neutral_cheek_points.copy()
 
                         driver_groups = build_driver_groups_from_neutral(
@@ -609,13 +580,19 @@ def main():
                             neutral_patch_points,
                             driver_groups,
                         )
+                        patch_weights = build_patch_weights(
+                            neutral_patch_points,
+                            driver_rest_points,
+                            power=SKINNING_WEIGHT_POWER,
+                            eps=SKINNING_EPSILON,
+                        )
 
                         cheek_capture_buffer.clear()
                         anchor_capture_buffer.clear()
                         capture_requested = False
 
                 # -------------------------------------------------------------
-                # Head-motion compensated cheek analysis + MLS deformation
+                # Head-motion compensated cheek analysis + linear skinning
                 # -------------------------------------------------------------
                 if neutral_cheek_points is not None and neutral_anchor_points is not None:
                     transform = estimate_head_motion_transform(
@@ -662,7 +639,7 @@ def main():
                             )
                             cv2.putText(
                                 frame,
-                                "Cheek analysis and MLS patch suppressed",
+                                "Cheek analysis and skinned patch suppressed",
                                 (20, 160),
                                 cv2.FONT_HERSHEY_SIMPLEX,
                                 0.55,
@@ -734,27 +711,30 @@ def main():
                                 )
 
                                 if (
-                                    SHOW_MLS_PATCH
+                                    SHOW_SKINNED_PATCH
                                     and neutral_patch_points is not None
                                     and driver_groups is not None
                                     and driver_rest_points is not None
+                                    and patch_weights is not None
                                 ):
                                     driver_current_points = compute_driver_current_points(
                                         corrected_cheek_points,
                                         driver_groups,
                                     )
-
-                                    mls_patch_points = mls_similarity_deform_points(
-                                        neutral_patch_points,
+                                    driver_offsets = compute_driver_offsets(
                                         driver_rest_points,
                                         driver_current_points,
-                                        alpha=MLS_ALPHA,
-                                        eps=MLS_EPSILON,
+                                    )
+
+                                    skinned_patch_points = linear_skinning_deform_points(
+                                        neutral_patch_points,
+                                        patch_weights,
+                                        driver_offsets,
                                     )
 
                                     draw_patch_from_points(
                                         frame,
-                                        mls_patch_points,
+                                        skinned_patch_points,
                                         patch_edges,
                                         color=(255, 0, 255),
                                         thickness=2,
@@ -770,7 +750,7 @@ def main():
 
                 cv2.putText(
                     frame,
-                    "Left Cheek Motion + Similarity MLS Patch",
+                    "Left Cheek Motion + Linear Skinning Patch",
                     (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.8,
@@ -804,6 +784,7 @@ def main():
                 neutral_patch_points = None
                 driver_groups = None
                 driver_rest_points = None
+                patch_weights = None
                 capture_requested = False
                 cheek_capture_buffer.clear()
                 anchor_capture_buffer.clear()
