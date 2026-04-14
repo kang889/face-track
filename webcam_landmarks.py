@@ -45,9 +45,14 @@ where:
 This is a lightweight translation-only skinning stage. It is intentionally
 simpler than the previous Similarity MLS version and is easier to explain and
 extend toward future skinning work.
+
+This file also includes an optional dataset-recording mode for future ML work.
+When recording is enabled, valid frames are saved as compressed NumPy samples
+containing cheek motion inputs and the matching linear-skinning patch output.
 """
 
 import time
+from pathlib import Path
 
 import cv2
 import mediapipe as mp
@@ -94,6 +99,13 @@ SHOW_ALL_LANDMARKS = True
 SHOW_ANCHORS = False
 SHOW_DRIVER_HANDLES = True
 SHOW_SKINNED_PATCH = True
+
+# Dataset recording for future ML work.
+# When recording is enabled, the program saves one .npz file per sampled frame.
+# Each file stores the cheek motion input and the corresponding linear-skinning
+# patch deformation target.
+DATASET_OUTPUT_DIR = Path("ml_dataset_linear_skinning")
+SAVE_EVERY_N_VALID_FRAMES = 2
 
 
 # -----------------------------------------------------------------------------
@@ -451,6 +463,63 @@ def linear_skinning_deform_points(neutral_patch_points, patch_weights, driver_of
     return (neutral_patch_points + blended_offsets).astype(np.float32)
 
 
+
+def save_training_sample(
+    output_dir,
+    sample_index,
+    corrected_cheek_points,
+    neutral_cheek_points,
+    driver_rest_points,
+    driver_current_points,
+    driver_offsets,
+    neutral_patch_points,
+    patch_weights,
+    skinned_patch_points,
+    patch_edges,
+):
+    """
+    Save one ML training sample as a compressed NumPy .npz file.
+
+    Saved content
+    -------------
+    cheek_displacement : (N, 2)
+        Corrected cheek motion relative to the neutral cheek.
+    driver_rest_points : (K, 2)
+        Neutral driver positions.
+    driver_current_points : (K, 2)
+        Current driver positions.
+    driver_offsets : (K, 2)
+        Current driver displacement from neutral.
+    neutral_patch_points : (N, 2)
+        Rest patch geometry.
+    patch_weights : (N, K)
+        Fixed per-vertex skinning weights.
+    skinned_patch_points : (N, 2)
+        Final patch output for this frame.
+    patch_displacement : (N, 2)
+        Final patch displacement relative to the neutral patch.
+    patch_edges : (E, 2)
+        Local connectivity of the cheek patch.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    cheek_displacement = (corrected_cheek_points - neutral_cheek_points).astype(np.float32)
+    patch_displacement = (skinned_patch_points - neutral_patch_points).astype(np.float32)
+
+    np.savez_compressed(
+        output_dir / f"sample_{sample_index:06d}.npz",
+        cheek_displacement=cheek_displacement,
+        driver_rest_points=driver_rest_points.astype(np.float32),
+        driver_current_points=driver_current_points.astype(np.float32),
+        driver_offsets=driver_offsets.astype(np.float32),
+        neutral_patch_points=neutral_patch_points.astype(np.float32),
+        patch_weights=patch_weights.astype(np.float32),
+        skinned_patch_points=skinned_patch_points.astype(np.float32),
+        patch_displacement=patch_displacement,
+        patch_edges=np.array(patch_edges, dtype=np.int32),
+    )
+
+
 # -----------------------------------------------------------------------------
 # Patch drawing
 # -----------------------------------------------------------------------------
@@ -497,6 +566,11 @@ def main():
     capture_requested = False
     cheek_capture_buffer = []
     anchor_capture_buffer = []
+
+    # Dataset recording state for future ML training.
+    record_dataset = False
+    valid_frame_index = 0
+    saved_sample_count = 0
 
     with FaceLandmarker.create_from_options(options) as landmarker:
         while True:
@@ -732,6 +806,27 @@ def main():
                                         driver_offsets,
                                     )
 
+                                    valid_frame_index += 1
+
+                                    if (
+                                        record_dataset
+                                        and valid_frame_index % SAVE_EVERY_N_VALID_FRAMES == 0
+                                    ):
+                                        save_training_sample(
+                                            DATASET_OUTPUT_DIR,
+                                            saved_sample_count,
+                                            corrected_cheek_points,
+                                            neutral_cheek_points,
+                                            driver_rest_points,
+                                            driver_current_points,
+                                            driver_offsets,
+                                            neutral_patch_points,
+                                            patch_weights,
+                                            skinned_patch_points,
+                                            patch_edges,
+                                        )
+                                        saved_sample_count += 1
+
                                     draw_patch_from_points(
                                         frame,
                                         skinned_patch_points,
@@ -758,9 +853,19 @@ def main():
                     2,
                 )
 
+            recording_status = "ON" if record_dataset else "OFF"
             cv2.putText(
                 frame,
-                "N = capture neutral | C = clear neutral | Q / ESC = quit",
+                f"Recording: {recording_status} | Saved: {saved_sample_count}",
+                (20, height - 45),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                1,
+            )
+            cv2.putText(
+                frame,
+                "N = capture neutral | C = clear neutral | R = record dataset | Q / ESC = quit",
                 (20, height - 20),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
@@ -788,6 +893,9 @@ def main():
                 capture_requested = False
                 cheek_capture_buffer.clear()
                 anchor_capture_buffer.clear()
+
+            elif key == ord("r"):
+                record_dataset = not record_dataset
 
             elif key == 27 or key == ord("q"):
                 break
