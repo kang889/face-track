@@ -64,13 +64,14 @@ from mediapipe.tasks.python.vision.face_landmarker import FaceLandmarksConnectio
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-
+SHOW_LANDMARK_IDS = False
+SHOW_ONLY_LEFT_CHEEK_IDS = False
 MODEL_PATH = "models/face_landmarker.task"
 
 # Left cheek landmark subset.
 LEFT_CHEEK_IDS = [
-    36, 50, 101, 111, 118, 117, 116, 123, 147,
-    192, 216, 206, 207, 205, 203, 212, 214, 187,
+    36, 50, 101, 111, 116, 117, 118, 123, 135, 137, 138, 147, 177,
+    187, 192, 203, 205, 206, 207, 212, 213, 214, 215, 216, 227
 ]
 
 # Relatively stable landmarks used only for head-motion compensation.
@@ -161,6 +162,40 @@ def draw_all_landmarks(frame, face_landmarks, width, height):
         x = int(lm.x * width)
         y = int(lm.y * height)
         cv2.circle(frame, (x, y), 1, (0, 100, 0), -1)
+        
+
+def draw_landmark_ids(frame, face_landmarks, width, height, only_ids=None):
+    """
+    Draw landmark index numbers on top of the detected face points.
+
+    Parameters
+    ----------
+    frame : np.ndarray
+        OpenCV frame.
+    face_landmarks : sequence
+        MediaPipe landmark list for one face.
+    width, height : int
+        Frame dimensions.
+    only_ids : set[int] | None
+        If provided, only draw labels for those landmark indices.
+    """
+    for index, lm in enumerate(face_landmarks):
+        if only_ids is not None and index not in only_ids:
+            continue
+
+        x = int(lm.x * width)
+        y = int(lm.y * height)
+
+        cv2.putText(
+            frame,
+            str(index),
+            (x + 3, y - 3),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.3,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
 
 
 
@@ -547,6 +582,8 @@ def main():
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         raise RuntimeError("Could not open webcam")
+    
+    global SHOW_LANDMARK_IDS, SHOW_ONLY_LEFT_CHEEK_IDS
 
     # Neutral tracking references.
     neutral_cheek_points = None
@@ -557,6 +594,8 @@ def main():
     driver_groups = None
     driver_rest_points = None
     patch_weights = None
+    
+ 
 
     patch_edges = build_local_patch_edges(
         LEFT_CHEEK_IDS,
@@ -593,6 +632,24 @@ def main():
 
                 if SHOW_ALL_LANDMARKS:
                     draw_all_landmarks(frame, face_landmarks, width, height)
+                
+                if SHOW_LANDMARK_IDS:
+                    if SHOW_ONLY_LEFT_CHEEK_IDS:
+                        draw_landmark_ids(
+                         frame,
+                         face_landmarks,
+                         width,
+                         height,
+                         only_ids=set(LEFT_CHEEK_IDS),
+                        )
+                    else:
+                     draw_landmark_ids(
+                     frame,
+                     face_landmarks,
+                     width,
+                     height,
+                     )
+                
 
                 current_cheek_points = get_landmark_points_px(
                     face_landmarks,
@@ -865,7 +922,7 @@ def main():
             )
             cv2.putText(
                 frame,
-                "N = capture neutral | C = clear neutral | R = record dataset | Q / ESC = quit",
+                "N = capture neutral | C = clear neutral | R = record dataset | I = show IDs | O = cheek-only IDs | Q / ESC = quit",
                 (20, height - 20),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
@@ -896,6 +953,12 @@ def main():
 
             elif key == ord("r"):
                 record_dataset = not record_dataset
+                
+            elif key == ord("i"):
+                 SHOW_LANDMARK_IDS = not SHOW_LANDMARK_IDS
+
+            elif key == ord("o"):
+                 SHOW_ONLY_LEFT_CHEEK_IDS = not SHOW_ONLY_LEFT_CHEEK_IDS
 
             elif key == 27 or key == ord("q"):
                 break

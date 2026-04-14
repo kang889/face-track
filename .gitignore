@@ -1,0 +1,4 @@
+ml_dataset_linear_skinning/
+*.pt
+.venv/
+__pycache__/
