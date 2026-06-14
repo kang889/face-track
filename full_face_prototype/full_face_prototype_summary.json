@@ -1,0 +1,21 @@
+{
+  "description": "Simple full-face prototype generated from a single cheek height map source.",
+  "source_cheek_map": "regional_heightmap_pred_absolute.png",
+  "canvas_size": [
+    1024,
+    1024
+  ],
+  "side": "anatomical right cheek of the face (viewer-left on a front-facing image)",
+  "layout_json": "full_face_prototype\\full_face_prototype_layout.json",
+  "notes": [
+    "This is a prototype full-face image, not a measured full-face deformation map.",
+    "Only the cheek region comes from recorded deformation.",
+    "The rest of the face is left at the neutral fill value.",
+    "Later, the layout JSON can be edited to better match the renderer texture/layout."
+  ],
+  "outputs": {
+    "prototype_png": "full_face_prototype\\full_face_prototype.png",
+    "debug_png": "full_face_prototype\\full_face_prototype_debug.png",
+    "layout_json": "full_face_prototype\\full_face_prototype_layout.json"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "description": "UV-based cheek height map exporter for OBJ face model.",
+  "obj": "FemaleBust.obj",
+  "cheek_map": "regional_heightmap_pred_absolute.png",
+  "object_name": "Anna_Head",
+  "resolution": [
+    1024,
+    1024
+  ],
+  "file_format": "PNG 8-bit grayscale",
+  "side": "right",
+  "neutral_8": 128,
+  "indent_strength_8": 90,
+  "source_mode": "indent",
+  "selected_cheek_faces": 421,
+  "notes": [
+    "The exported height map is aligned to the OBJ UV layout, not a guessed full-face oval.",
+    "Only the valid mask region contains measured/inserted cheek deformation.",
+    "All other pixels are neutral/no displacement.",
+    "If the cheek appears on the wrong side in the renderer, re-run with --model-right-sign 1 or --side left.",
+    "By default, only the largest selected UV island is used to avoid small detached seam islands."
+  ],
+  "outputs": {
+    "heightmap": "heightmap_1024.png",
+    "valid_mask": "heightmap_valid_mask_1024.png",
+    "alpha_mask": "heightmap_alpha_mask_1024.png",
+    "uv_layout": "uv_layout_1024.png",
+    "uv_cheek_region_mask": "uv_cheek_region_mask_1024.png",
+    "debug": "uv_heightmap_debug_1024.png"
+  },
+  "selection_parameters": {
+    "model_right_sign": -1,
+    "cheek_x_min": 0.22,
+    "cheek_x_max": 0.72,
+    "cheek_y_min": 0.02,
+    "cheek_y_max": 0.48,
+    "cheek_z_min": 0.15
+  }
+}

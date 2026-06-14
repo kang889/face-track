@@ -1,0 +1,64 @@
+{
+  "dataset_dir": "ml_dataset_face_press_multipass",
+  "valid_sample_count": 874,
+  "bad_file_count": 1,
+  "bad_files": [
+    "sample_test_0000.npz: \"sample_test_0000.npz missing keys: ['anchor_alignment_error', 'blocked_mask', 'cheek_displacement_xy', 'cheek_displacement_xyz', 'corrected_cheek_points_px', 'current_cheek_xyz', 'fingertip_px', 'fingertip_xyz', 'hand_landmarks_px', 'hand_landmarks_xyz', 'hand_present', 'neutral_cheek_points_px', 'neutral_cheek_xyz', 'point_motion_magnitude_visible_xy', 'pressure_label', 'session_label', 'source_local_index', 'source_mp_id', 'trial_index', 'visible_cheek_displacement_xy', 'visible_cheek_displacement_xyz', 'visible_mask']\""
+  ],
+  "unique_sessions": {
+    "face_press_session_20260524_171219": 874
+  },
+  "unique_source_local_indices": {
+    "13": 874
+  },
+  "unique_source_mp_ids": {
+    "187": 874
+  },
+  "pressure_distribution": {
+    "medium": 874
+  },
+  "trial_distribution": {
+    "1": 874
+  },
+  "visible_points_per_sample": {
+    "mean": 20.8649885583524,
+    "median": 20.0,
+    "min": 17.0,
+    "max": 25.0
+  },
+  "blocked_points_per_sample": {
+    "mean": 4.135011441647597,
+    "median": 5.0,
+    "min": 0.0,
+    "max": 8.0
+  },
+  "anchor_alignment_error_px": {
+    "mean": 3.810280168492952,
+    "median": 4.080584526062012,
+    "min": 0.6589625477790833,
+    "max": 7.912319660186768
+  },
+  "fingertip_to_source_distance_px": {
+    "mean": 26.03494476726527,
+    "median": 17.730253219604492,
+    "min": 1.3988478183746338,
+    "max": 136.79786682128906
+  },
+  "dominant_source_local_index": 13,
+  "dominant_source_fraction": 1.0,
+  "mean_visible_ratio": 0.8345995423340961,
+  "min_landmark_coverage_ratio": 0.35469107551487417,
+  "overall_recommendation": "Good enough to move forward to a first prototype model and renderer-facing sparse deformation export.",
+  "next_step_notes": [
+    "Sample count is large enough for a first prototype model.",
+    "Source point is consistent enough for a single-source prototype.",
+    "Visible landmark coverage per frame looks acceptable for a visible-region model.",
+    "Every cheek landmark has at least some usable coverage across the dataset.",
+    "Head-motion compensation looks reasonably stable.",
+    "Finger contact stays reasonably close to the chosen source region."
+  ],
+  "output_files": {
+    "landmark_coverage_csv": "ml_dataset_face_press_multipass\\analysis\\landmark_coverage.csv",
+    "trial_summary_csv": "ml_dataset_face_press_multipass\\analysis\\trial_summary.csv"
+  }
+}

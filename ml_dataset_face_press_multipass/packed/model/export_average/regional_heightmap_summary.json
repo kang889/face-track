@@ -1,0 +1,56 @@
+{
+  "description": "Average regional approximate cheek height map export from filtered face-press subset.",
+  "source_local_index": 13,
+  "source_mp_id": 187,
+  "subset_count": 169,
+  "texture_size": 256,
+  "pressure_distribution": {
+    "1": 169
+  },
+  "trial_count": 1,
+  "fingertip_dist_px": {
+    "mean": 12.79541015625,
+    "median": 13.043915748596191,
+    "min": 1.422194004058838,
+    "max": 24.963666915893555
+  },
+  "visible_points": {
+    "mean": 20.698224852071007,
+    "median": 21.0,
+    "min": 20,
+    "max": 23
+  },
+  "alignment_error_px": {
+    "mean": 3.2781248092651367,
+    "median": 3.7437827587127686,
+    "min": 0.7597211003303528,
+    "max": 4.993631362915039
+  },
+  "height_map_region": "regional cheek patch defined by the 25 neutral template points",
+  "note": "This is an interpolated approximate regional height map from sparse landmark deformation, not a true dense depth map.",
+  "files": {
+    "heightmap_pred_relative_png": "regional_heightmap_pred_relative.png",
+    "heightmap_pred_absolute_png": "regional_heightmap_pred_absolute.png",
+    "heightmap_true_relative_png": "regional_heightmap_true_avg_relative.png",
+    "heightmap_true_absolute_png": "regional_heightmap_true_avg_absolute.png",
+    "heightmap_pred_float_npy": "regional_heightmap_pred_float.npy",
+    "heightmap_true_float_npy": "regional_heightmap_true_avg_float.npy",
+    "heightmap_pred_csv": "regional_heightmap_pred_float.csv",
+    "heightmap_true_csv": "regional_heightmap_true_avg_float.csv",
+    "reference_patch_png": "regional_patch_reference.png",
+    "average_sparse_npz": "regional_average_sparse_points.npz",
+    "average_sparse_csv": "regional_average_sparse_points.csv"
+  },
+  "relative_scaling": {
+    "pred_map_min": 0.010659291408956051,
+    "pred_map_max": 0.03213490918278694,
+    "true_map_min": 0.011976407840847969,
+    "true_map_max": 0.02785436622798443
+  },
+  "absolute_scaling": {
+    "pred_dataset_min": 0.004202891141176224,
+    "pred_dataset_max": 0.04862039536237717,
+    "true_dataset_min": 0.0009665321558713913,
+    "true_dataset_max": 0.05096438527107239
+  }
+}

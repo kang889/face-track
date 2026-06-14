@@ -2,3 +2,4 @@ ml_dataset_linear_skinning/
 *.pt
 .venv/
 __pycache__/
+sticker_deformation_track_occlusion_aware/
