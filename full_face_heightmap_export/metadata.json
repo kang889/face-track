@@ -1,0 +1,33 @@
+{
+  "description": "Cheek-only full-face height-map prototype exporter.",
+  "input_cheek_map": "regional_heightmap_pred_absolute.png",
+  "canvas_size": 1024,
+  "base_mode": "flat",
+  "anatomical_side": "right",
+  "neutral_16": 32768,
+  "outside_face_16": 0,
+  "face_depth_span_16": 5000,
+  "indent_range_16": 7000,
+  "placement": {
+    "cheek_center_x": 0.34,
+    "cheek_center_y": 0.56,
+    "cheek_width": 0.22,
+    "cheek_height": 0.24,
+    "cheek_rotation_deg": -8.0,
+    "feather_px": 18
+  },
+  "interpretation": {
+    "valid_region": "Only the cheek region in full_face_valid_mask.png contains measured deformation.",
+    "outside_region": "Remaining facial regions are neutral/prototype placeholders.",
+    "dark_semantics": "Darker cheek values are interpreted as more inward indentation."
+  },
+  "outputs": {
+    "heightmap_16bit": "full_face_heightmap_16bit.png",
+    "heightmap_preview_8bit": "full_face_heightmap_preview_8bit.png",
+    "shaded_preview": "full_face_heightmap_shaded_preview.png",
+    "face_mask": "full_face_face_mask.png",
+    "valid_mask": "full_face_valid_mask.png",
+    "valid_alpha_mask": "full_face_valid_alpha_mask.png",
+    "debug_overlay": "full_face_debug_overlay.png"
+  }
+}

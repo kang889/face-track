@@ -1,0 +1,44 @@
+{
+  "description": "Procedural 3D face mesh with cheek-only deformation applied.",
+  "source_cheek_map": "/mnt/data/regional_heightmap_pred_absolute(2).png",
+  "important_limitations": [
+    "This is not a true scanned 3D face.",
+    "The full face is a procedural neutral prototype surface.",
+    "Only the cheek region uses measured/predicted deformation data.",
+    "Remaining facial regions should be treated as neutral/unmeasured."
+  ],
+  "coordinate_convention": {
+    "x": "viewer-left negative, viewer-right positive",
+    "y": "up positive",
+    "z": "forward/out of face positive",
+    "anatomical_right_cheek": "viewer-left on a front-facing face, therefore negative X"
+  },
+  "deformation_interpretation": {
+    "dark_is_inward": true,
+    "application": "z_deformed = z_neutral - inward_displacement",
+    "max_indent_requested_obj_units": 0.075,
+    "max_indent_applied_obj_units": 0.07500000298023224
+  },
+  "cheek_registration": {
+    "side": "right",
+    "center_x": -0.36,
+    "center_y": -0.05,
+    "width": 0.52,
+    "height": 0.7,
+    "rotation_deg": -8.0
+  },
+  "outputs": {
+    "obj": "prototype_face_right_cheek_deformed.obj",
+    "mtl": "prototype_face_right_cheek_deformed.mtl",
+    "texture": "prototype_face_texture.png",
+    "cheek_valid_mask": "prototype_face_cheek_valid_mask.png",
+    "displacement_map_preview": "prototype_face_displacement_map_preview.png",
+    "registration_debug": "prototype_face_cheek_registration_debug.png",
+    "preview": "prototype_face_3d_preview.png"
+  },
+  "mesh_stats": {
+    "vertices": 24742,
+    "triangles": 48856,
+    "grid_resolution": 180
+  }
+}

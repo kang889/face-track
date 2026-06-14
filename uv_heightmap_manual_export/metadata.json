@@ -1,0 +1,63 @@
+{
+  "description": "Manual UV cheek-mask heightmap export. The cheek region is manually registered to the OBJ UV layout instead of selected by rough 3D bbox.",
+  "obj": "FemaleBust.obj",
+  "cheek_map": "regional_heightmap_pred_absolute.png",
+  "resolution": [
+    1024,
+    1024
+  ],
+  "object_name": "Anna_Head",
+  "side": "right",
+  "neutral_8": 128,
+  "indent_strength_8": 90,
+  "feather_px": 14,
+  "polygon_px_1024_basis": [
+    [
+      265,
+      405
+    ],
+    [
+      350,
+      395
+    ],
+    [
+      426,
+      425
+    ],
+    [
+      478,
+      485
+    ],
+    [
+      468,
+      565
+    ],
+    [
+      425,
+      635
+    ],
+    [
+      350,
+      690
+    ],
+    [
+      280,
+      665
+    ],
+    [
+      235,
+      585
+    ],
+    [
+      230,
+      500
+    ]
+  ],
+  "outputs": {
+    "heightmap": "heightmap_1024.png",
+    "valid_mask": "heightmap_valid_mask_1024.png",
+    "alpha_mask": "heightmap_alpha_mask_1024.png",
+    "debug": "uv_heightmap_debug_1024.png"
+  },
+  "note": "Check debug output. If the region touches the eye, edit the polygon points and rerun."
+}

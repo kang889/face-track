@@ -1,0 +1,111 @@
+face_press_multipass_recorder_compensated.py
+
+Command:
+
+python face_press_multipass_recorder_compensated.py
+
+What it does:
+This is the best recorder from the face-pressure phase. It records repeated finger presses on the same cheek source point, compensates for small head movement, keeps visible cheek landmarks, and skips blocked ones.
+
+analyze_face_press_dataset.py
+
+Command:
+
+python analyze_face_press_dataset.py ml_dataset_face_press_multipass
+
+or for one session:
+
+python analyze_face_press_dataset.py ml_dataset_face_press_multipass\face_press_session_YYYYMMDD_HHMMSS
+
+What it does:
+Checks whether the recorded dataset is usable. It summarizes visibility, blocked points, alignment error, fingertip distance, source consistency, and landmark coverage.
+
+
+3) pack_face_press_dataset.py
+
+Command:
+
+python pack_face_press_dataset.py ml_dataset_face_press_multipass
+
+What it does:
+Turns the raw recorded .npz samples into a training-ready packed dataset with:
+
+input X
+target Y
+visibility mask M
+train/val/test splits
+
+
+4) train_face_press_model_fixed.py
+
+Command:
+
+python train_face_press_model_fixed.py ml_dataset_face_press_multipass\packed\face_press_packed.npz
+
+What it does:
+Trains the PyTorch model on the packed dataset. This is the fixed version that works with your PyTorch checkpoint loading issue.
+
+
+5) export_face_press_inference.py
+
+Command:
+
+python export_face_press_inference.py --model ml_dataset_face_press_multipass\packed\model\best_model.pt --packed ml_dataset_face_press_multipass\packed\face_press_packed.npz --sample-index 0
+
+What it does:
+Loads the trained model, runs inference on one packed sample, and exports one predicted cheek deformation sample.
+
+
+6) filter_face_press_subset.py
+
+Command:
+
+python filter_face_press_subset.py ml_dataset_face_press_multipass\packed\face_press_packed.npz
+
+What it does:
+Filters the packed dataset down to a clean subset, for example:
+
+medium pressure
+fingertip close to source
+enough visible cheek points
+low alignment error
+
+
+7) build_average_heightmap_export_with_csv.py
+
+Command:
+
+python build_average_heightmap_export_with_csv.py --model ml_dataset_face_press_multipass\packed\model\best_model.pt --filtered ml_dataset_face_press_multipass\packed\filtered_subset\face_press_filtered_subset.npz --size 256
+
+What it does:
+Takes the filtered subset, runs the model on it, averages the predicted cheek deformation, and exports:
+
+approximate regional height map PNG
+CSV
+sparse averaged cheek-point data
+patch reference image
+
+
+
+8) build_average_heightmap_export_16bit.py
+
+Command:
+
+python build_average_heightmap_export_16bit.py --model ml_dataset_face_press_multipass\packed\model\best_model.pt --filtered ml_dataset_face_press_multipass\packed\filtered_subset\face_press_filtered_subset.npz --size 256
+
+What it does:
+Same idea as the previous exporter, but saves the PNG height map as 16-bit instead of 8-bit.
+
+
+9) convert_heightmap_npy_to_json.py
+
+Command:
+
+python convert_heightmap_npy_to_json.py ml_dataset_face_press_multipass\packed\model\export_average\regional_heightmap_pred_float.npy --summary ml_dataset_face_press_multipass\packed\model\export_average\regional_heightmap_summary.json
+
+Optional CSV too:
+
+python convert_heightmap_npy_to_json.py ml_dataset_face_press_multipass\packed\model\export_average\regional_heightmap_pred_float.npy --summary ml_dataset_face_press_multipass\packed\model\export_average\regional_heightmap_summary.json --csv-out ml_dataset_face_press_multipass\packed\model\export_average\regional_heightmap_pred_float.csv
+
+What it does:
+Converts the numeric .npy height map into JSON, and optionally CSV.

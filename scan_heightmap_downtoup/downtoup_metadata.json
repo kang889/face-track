@@ -1,0 +1,96 @@
+{
+  "neutral": "neutral_output.obj",
+  "pressed": "downtoup.obj",
+  "raw_vertices": {
+    "neutral": 22317,
+    "pressed": 30576
+  },
+  "after_percentile_crop": {
+    "neutral": 20976,
+    "pressed": 28753
+  },
+  "downsampled_vertices": {
+    "neutral": 13049,
+    "pressed": 17957
+  },
+  "icp": {
+    "errors": [
+      0.010821580064766278,
+      0.008444426854561645,
+      0.00705082027877435,
+      0.006255745390574944,
+      0.005785910781156074,
+      0.005452670781386804,
+      0.0052105168880576145,
+      0.005021765896261461,
+      0.004873851332235145,
+      0.004754215860023346,
+      0.00464884347466466,
+      0.004558732880834374,
+      0.00448115131876706,
+      0.004413855843455561,
+      0.004357801648215555,
+      0.004308202836039118,
+      0.004257949590987899,
+      0.004218385497881015,
+      0.004185855383719736,
+      0.004155415707448143,
+      0.0041268011973478545,
+      0.004101113357794994,
+      0.004077441371126745,
+      0.004058700077414661,
+      0.004041362541063146,
+      0.004025421768078194,
+      0.004011649338912855,
+      0.003999677818304191,
+      0.003990478958676724,
+      0.003982222215409273,
+      0.0039748365340883775,
+      0.003968367282122934,
+      0.00396196863751372,
+      0.003955943552181659,
+      0.003951725875549461
+    ],
+    "final_mean_error": 0.003951725875549461,
+    "trim_fraction": 0.7,
+    "max_corr_dist": 0.08
+  },
+  "roi_parameters": {
+    "x_min": -0.85,
+    "x_max": 0.1,
+    "y_min": -0.35,
+    "y_max": 0.55,
+    "z_min": -1.0,
+    "z_max": 1.0
+  },
+  "displacement": {
+    "method": "PCA local normal projection",
+    "flip_sign": false,
+    "valid_points": 2211,
+    "total_roi_points": 2211,
+    "min": -0.027200855301958697,
+    "max": 0.006531616443075644,
+    "mean": -0.0011442035387287841
+  },
+  "heightmap": {
+    "xy_bbox": {
+      "min": [
+        -0.17321,
+        -0.1099
+      ],
+      "max": [
+        0.00528,
+        0.05974
+      ]
+    },
+    "strength_used": 0.013707296578605893,
+    "valid_points": 2211
+  },
+  "outputs": {
+    "heightmap": "downtoup_cheek_heightmap_256.png",
+    "valid_mask": "downtoup_cheek_valid_mask_256.png",
+    "alignment_debug": "downtoup_alignment_debug.png",
+    "metadata": "downtoup_metadata.json"
+  },
+  "note": "This is a prototype. Inspect alignment_debug and heightmap before using the result as the cheek-map input to the UV exporter."
+}

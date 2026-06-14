@@ -1,0 +1,44 @@
+{
+  "input_path": "ml_dataset_face_press_multipass",
+  "output_dir": "ml_dataset_face_press_multipass\\packed",
+  "packed_npz": "ml_dataset_face_press_multipass\\packed\\face_press_packed.npz",
+  "num_samples_kept": 743,
+  "num_features": 6,
+  "num_targets": 75,
+  "num_landmarks": 25,
+  "source_local_index": 13,
+  "source_mp_id": 187,
+  "feature_names": [
+    "fingertip_rel_source_px_x",
+    "fingertip_rel_source_px_y",
+    "fingertip_x",
+    "fingertip_y",
+    "fingertip_z",
+    "pressure_tier"
+  ],
+  "split_method": "frame_random_split",
+  "train_count": 520,
+  "val_count": 111,
+  "test_count": 112,
+  "visible_points_per_sample": {
+    "mean": 20.13593539703903,
+    "median": 20.0,
+    "min": 17,
+    "max": 25
+  },
+  "alignment_error_px": {
+    "mean": 3.064602851867676,
+    "median": 3.0,
+    "min": 0.0,
+    "max": 7.0
+  },
+  "skipped_counts": {
+    "missing_fingertip": 131
+  },
+  "pressure_distribution": {
+    "medium": 743
+  },
+  "trial_distribution": {
+    "1": 743
+  }
+}
